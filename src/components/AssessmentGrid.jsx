@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { ASSESSMENT_METRICS } from '../constants/metrics';
-import { Info, BarChart2, TrendingUp, Users } from 'lucide-react';
+import { Info, Trash2, Undo2, Redo2, CheckCircle2 } from 'lucide-react';
 
 // Helper สร้าง key ให้ตรงกับ backend headers
 const getItemKey = (aspectId, index) => {
@@ -12,7 +11,7 @@ const getItemKey = (aspectId, index) => {
   return `${aspectId}.${index + 1}`;
 };
 
-function AssessmentGrid({ data, setData, isGlobalSummary }) {
+function AssessmentGrid({ data, setData, isGlobalSummary, undoHistory, metrics }) {
   const [activeTab, setActiveTab] = useState('characteristics');
 
   // Level Calculation Formulas
@@ -40,16 +39,22 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
   };
 
   const getLevelColor = (level) => {
-    if (level === "3") return "#dcfce7"; // light green
-    if (level === "2") return "#dbeafe"; // light blue
-    if (level === "1") return "#fef9c3"; // light yellow
-    if (level === "0") return "#fee2e2"; // light red
-    return "transparent";
+    if (level === "3") return "bg-green-100 text-green-700";
+    if (level === "2") return "bg-blue-100 text-blue-700";
+    if (level === "1") return "bg-yellow-100 text-yellow-700";
+    if (level === "0") return "bg-red-100 text-red-700";
+    return "bg-transparent";
   };
 
   const handleValueChange = (rowIndex, metricId, subIndex, value) => {
     if (isGlobalSummary) return;
     if (value !== "" && !/^[1-3]$/.test(value)) return;
+    
+    // Push history ก่อนเปลี่ยน (สำหรับ Ctrl+Z)
+    if (undoHistory) {
+      undoHistory.pushHistory(data);
+    }
+    
     const newData = [...data];
     const key = getItemKey(metricId, subIndex);
     newData[rowIndex] = { ...newData[rowIndex], [key]: value };
@@ -59,9 +64,15 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
   const handlePaste = (e, startRowIndex, startMetricId, startSubIndex) => {
     if (isGlobalSummary) return;
     e.preventDefault();
+    
+    // Push history ก่อน paste
+    if (undoHistory) {
+      undoHistory.pushHistory(data);
+    }
+    
     const pasteContent = e.clipboardData.getData('text/plain');
     const rows = pasteContent.split(/\r?\n/).filter(r => r.trim() !== "");
-    const currentTabMetricKeys = ASSESSMENT_METRICS[activeTab].aspects.flatMap(aspect => 
+    const currentTabMetricKeys = metrics[activeTab].aspects.flatMap(aspect => 
        aspect.items.map((_, i) => getItemKey(aspect.id, i))
     );
     const startMetricKey = getItemKey(startMetricId, startSubIndex);
@@ -84,8 +95,35 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
     setData(newData);
   };
 
+  const handleClearAll = () => {
+    if (isGlobalSummary) return;
+    if (!data || data.length === 0) return;
+    
+    if (!window.confirm(`ต้องการล้างค่าทั้งหมดใน "${metrics[activeTab].title}" ใช่หรือไม่?`)) {
+      return;
+    }
+    
+    // Push history ก่อนล้าง
+    if (undoHistory) {
+      undoHistory.pushHistory(data);
+    }
+    
+    const newData = [...data];
+    const keysToClear = metrics[activeTab].aspects.flatMap(aspect => 
+      aspect.items.map((_, i) => getItemKey(aspect.id, i))
+    );
+    
+    newData.forEach((row, idx) => {
+      keysToClear.forEach(key => {
+        newData[idx] = { ...newData[idx], [key]: "" };
+      });
+    });
+    
+    setData(newData);
+  };
+
   const getRowMetricsData = (row, category) => {
-    const keys = ASSESSMENT_METRICS[category].aspects.flatMap(aspect => 
+    const keys = metrics[category].aspects.flatMap(aspect => 
        aspect.items.map((_, i) => getItemKey(aspect.id, i))
     );
     const scores = keys.map(k => parseFloat(row[k])).filter(s => !isNaN(s));
@@ -94,16 +132,30 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
   };
 
   const getSubHeader = () => {
-    const metric = ASSESSMENT_METRICS[activeTab];
+    const metric = metrics[activeTab];
     return (
       <tr>
         {metric.aspects.map(aspect => (
           <React.Fragment key={aspect.id}>
             {aspect.items.map((item, i) => {
-               const aspectIndex = metric.aspects.indexOf(aspect) + 1;
+               let label;
+               if (activeTab === 'evaluations') {
+                 if (aspect.id === 'R') {
+                   label = `1.${i+1}`;
+                 } else if (aspect.id === 'ST') {
+                   label = `2.${i+1}`;
+                 }
+               } else {
+                 const aspectIndex = metric.aspects.indexOf(aspect) + 1;
+                 label = `${aspectIndex}.${i+1}`;
+               }
                return (
-                  <th key={`${aspect.id}-${i}`} title={item} style={{ width: '2.5rem', minWidth: '2.5rem', background: '#f1f5f9', padding: '0.25rem', fontSize: '0.65rem', textAlign: 'center' }}>
-                    {aspectIndex}.{i+1}
+                  <th 
+                    key={`${aspect.id}-${i}`} 
+                    title={item} 
+                    className="w-10 min-w-10 bg-slate-100 p-1 text-[0.65rem] text-center font-medium text-text-muted"
+                  >
+                    {label}
                   </th>
                );
             })}
@@ -113,7 +165,7 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
     );
   };
 
-  if (!data) return null;
+  if (!data || !metrics) return null;
 
   // Statistical calculations for footer
   const results = data.map(row => getRowMetricsData(row, activeTab));
@@ -123,55 +175,118 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
   const percent3 = totalStudents > 0 ? ((count3 / totalStudents) * 100).toFixed(2) : "0.00";
   const percent2 = totalStudents > 0 ? ((count2 / totalStudents) * 100).toFixed(2) : "0.00";
 
+  const tabKeys = Object.entries(metrics);
+
+  const isCategoryComplete = (categoryKey) => {
+    if (!data || data.length === 0) return false;
+    const keys = metrics[categoryKey].aspects.flatMap(aspect => 
+       aspect.items.map((_, i) => getItemKey(aspect.id, i))
+    );
+    return data.every(student => 
+       keys.every(k => student[k] && /^[1-3]$/.test(student[k]))
+    );
+  };
+
   return (
-    <div className="card fade-in" style={{ padding: '1.5rem', background: '#fff' }}>
-      <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1.25rem', borderBottom: '2px solid var(--border)' }}>
-        {Object.entries(ASSESSMENT_METRICS).map(([key, value]) => (
+    <div className="bg-white/95 backdrop-blur-sm border border-border rounded-2xl p-5 shadow-soft fade-in">
+      {/* Tab Navigation */}
+      <div className="flex gap-1 mb-5 border-b-2 border-border">
+        {tabKeys.map(([key, value]) => {
+          const complete = isCategoryComplete(key);
+          return (
           <button 
             key={key} 
-            className={`btn`} 
             onClick={() => setActiveTab(key)}
-            style={{ 
-              background: 'transparent',
-              color: activeTab === key ? 'var(--primary)' : 'var(--text-muted)',
-              fontSize: '0.875rem',
-              border: 'none',
-              borderBottom: activeTab === key ? '3px solid var(--primary)' : '3px solid transparent',
-              borderRadius: 0,
-              fontWeight: activeTab === key ? '800' : '500',
-              padding: '0.75rem 1rem'
-            }}
+            className={`flex items-center gap-2 bg-transparent text-sm border-none cursor-pointer px-4 py-3 font-bold transition-all duration-200 ${
+              activeTab === key 
+                ? 'text-primary border-b-[3px] border-primary -mb-[2px]' 
+                : 'text-text-muted border-b-[3px] border-transparent hover:text-primary/70'
+            }`}
           >
             {value.title}
+            {complete && <CheckCircle2 size={16} className="text-green-500" />}
           </button>
-        ))}
+        )})}
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ padding: '0.75rem 1rem', background: '#f0f9ff', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', border: '1px solid #bae6fd' }}>
-            <Info size={18} style={{ color: '#0284c7' }} />
-            <p style={{ fontSize: '0.85rem', color: '#075985', margin: 0 }}>
-              พิมพ์เลข 1-3 หรือ <strong>คัดลอกข้อมูลจาก Excel แล้ววาง</strong> ลงในช่องคะแนนได้เลย
-            </p>
+      {/* Info Bar & Controls */}
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
+        {/* Info */}
+        <div className="flex items-center gap-3 px-4 py-3 bg-sky-50 rounded-lg border border-sky-200">
+          <Info size={18} className="text-sky-600 shrink-0" />
+          <p className="text-sm text-sky-800">
+            พิมพ์เลข 1-3 หรือ <strong>คัดลอกข้อมูลจาก Excel แล้ววาง</strong> ลงในช่องคะแนนได้เลย
+          </p>
+        </div>
+
+        {/* Controls */}
+        <div className="flex gap-3 items-center">
+          {/* Student count */}
+          <div className="flex gap-4 px-4 py-2 bg-slate-50 rounded-xl border border-border">
+            <div className="text-center">
+              <div className="text-[0.65rem] text-text-muted">จำนวนนักเรียน</div>
+              <div className="font-extrabold text-text-main">{totalStudents} คน</div>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '1.5rem', padding: '0.5rem 1.5rem', background: '#f8fafc', borderRadius: '0.75rem', border: '1px solid var(--border)' }}>
-             <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.65rem', color: '#64748b' }}>จำนวนนักเรียน</div><div style={{ fontWeight: '800' }}>{totalStudents} คน</div></div>
-          </div>
+
+          {/* Undo/Redo buttons */}
+          {undoHistory && !isGlobalSummary && (
+            <div className="flex gap-1">
+              <button
+                onClick={undoHistory.undo}
+                disabled={!undoHistory.canUndo}
+                title={`ย้อนกลับ (Ctrl+Z) - เหลือ ${undoHistory.undoCount} ครั้ง`}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-slate-100 text-text-muted rounded-lg border border-border cursor-pointer transition-all hover:bg-primary-light hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Undo2 size={14} />
+                <span className="hidden sm:inline">ย้อนกลับ</span>
+                {undoHistory.undoCount > 0 && (
+                  <span className="bg-primary text-white text-[0.6rem] px-1.5 py-0.5 rounded-full">{undoHistory.undoCount}</span>
+                )}
+              </button>
+              <button
+                onClick={undoHistory.redo}
+                disabled={!undoHistory.canRedo}
+                title={`ทำซ้ำ (Ctrl+Y) - เหลือ ${undoHistory.redoCount} ครั้ง`}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-slate-100 text-text-muted rounded-lg border border-border cursor-pointer transition-all hover:bg-primary-light hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Redo2 size={14} />
+                <span className="hidden sm:inline">ทำซ้ำ</span>
+                {undoHistory.redoCount > 0 && (
+                  <span className="bg-secondary text-white text-[0.6rem] px-1.5 py-0.5 rounded-full">{undoHistory.redoCount}</span>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Clear button */}
+          {!isGlobalSummary && (
+            <button
+              onClick={handleClearAll}
+              className="flex items-center gap-2 px-3 py-2 bg-red-50 text-danger border border-danger rounded-lg cursor-pointer text-sm font-semibold transition-all hover:bg-red-100"
+              title="ล้างค่าทั้งหมดในแท็บนี้"
+            >
+              <Trash2 size={16} />
+              ล้างค่า
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="table-container">
-        <table>
-          <thead className="sticky-header">
+      {/* Data Table */}
+      <div className="overflow-x-auto rounded-lg border border-border bg-white shadow-sm">
+        <table className="w-full border-collapse text-xs">
+          <thead className="sticky top-0 z-10">
             <tr>
-              <th rowSpan={2} className="sticky-col" style={{ width: '50px', textAlign: 'center' }}>#</th>
-              <th rowSpan={2} className="sticky-col" style={{ left: '50px', width: '200px', background: '#f1f5f9' }}>รายชื่อ</th>
-              {ASSESSMENT_METRICS[activeTab].aspects.map(aspect => (
-                <th key={aspect.id} colSpan={aspect.items.length} style={{ textAlign: 'center', background: '#f8fafc', color: 'var(--primary)' }}>
+              <th rowSpan={2} className="sticky-col w-[50px] text-center bg-gradient-to-b from-slate-50 to-slate-100 p-2 border-b border-border text-text-muted font-semibold text-[0.625rem] uppercase">#</th>
+              <th rowSpan={2} className="sticky-col bg-gradient-to-b from-slate-50 to-slate-100 p-2 border-b border-border text-text-muted font-semibold text-[0.625rem] uppercase" style={{ left: '50px', width: '200px' }}>รายชื่อ</th>
+              {metrics[activeTab].aspects.map(aspect => (
+                <th key={aspect.id} colSpan={aspect.items.length} className="text-center bg-slate-50 text-primary p-2 border-b border-border text-[0.625rem] font-bold uppercase">
                   {aspect.label}
                 </th>
               ))}
-              <th rowSpan={2} style={{ background: '#f1f5f9', textAlign: 'center', width: '3.5rem', verticalAlign: 'middle' }}>รวม</th>
-              <th rowSpan={2} style={{ background: 'var(--primary)', color: '#fff', textAlign: 'center', width: '3.5rem', verticalAlign: 'middle' }}>ระดับ</th>
+              <th rowSpan={2} className="bg-slate-100 text-center w-14 align-middle p-2 border-b border-border text-[0.625rem] font-bold uppercase text-text-muted">รวม</th>
+              <th rowSpan={2} className="bg-gradient-to-b from-primary to-primary-hover text-white text-center w-14 align-middle p-2 border-b border-border text-[0.625rem] font-bold uppercase">ระดับ</th>
             </tr>
             {getSubHeader()}
           </thead>
@@ -179,14 +294,14 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
             {data.map((student, rowIndex) => {
               const { sum, level } = results[rowIndex];
               return (
-                <tr key={student.ID}>
-                  <td className="sticky-col" style={{ textAlign: 'center', color: '#94a3b8', background: '#fff' }}>{rowIndex + 1}</td>
-                  <td className="sticky-col" style={{ left: '50px', fontWeight: 600, background: '#fff' }}>{student.Name}</td>
-                  {ASSESSMENT_METRICS[activeTab].aspects.map(aspect => 
+                <tr key={student.ID} className="hover:bg-slate-50/80 transition-colors">
+                  <td className="sticky-col text-center text-slate-400 bg-white p-1 border-b border-border">{rowIndex + 1}</td>
+                  <td className="sticky-col font-semibold bg-white p-1 border-b border-border text-sm" style={{ left: '50px' }}>{student.Name}</td>
+                  {metrics[activeTab].aspects.map(aspect => 
                     aspect.items.map((_, subIndex) => {
                       const key = getItemKey(aspect.id, subIndex);
                       return (
-                        <td key={key} style={{ padding: '0', width: '2.5rem' }}>
+                        <td key={key} className="p-0 w-10 border-b border-border">
                           <input
                             type="text"
                             className={`score-input score-${student[key] || ""}`}
@@ -199,30 +314,30 @@ function AssessmentGrid({ data, setData, isGlobalSummary }) {
                       );
                     })
                   )}
-                  <td style={{ textAlign: 'center', fontWeight: '800', background: '#f8fafc' }}>{sum}</td>
-                  <td style={{ textAlign: 'center', fontWeight: '800', backgroundColor: getLevelColor(level) }}>{level}</td>
+                  <td className="text-center font-extrabold bg-slate-50 p-1 border-b border-border">{sum}</td>
+                  <td className={`text-center font-extrabold p-1 border-b border-border ${getLevelColor(level)}`}>{level}</td>
                 </tr>
               );
             })}
           </tbody>
-          <tfoot style={{ position: 'sticky', bottom: 0, background: '#fff', borderTop: '2px solid var(--primary)' }}>
+          <tfoot className="sticky bottom-0 bg-white border-t-2 border-primary">
             <tr>
-              <td colSpan={2} style={{ padding: '1rem', fontWeight: '800', background: '#f1f5f9' }}>สรุปผลประเมิน</td>
-              <td colSpan={ASSESSMENT_METRICS[activeTab].aspects.reduce((a, b) => a + b.items.length, 0)} style={{ padding: '1rem' }}>
-                 <div style={{ display: 'flex', gap: '2.5rem', justifyContent: 'flex-end' }}>
-                    <div style={{ display: 'flex', gap: '1rem' }}>
-                       <span>ได้ 3: <strong style={{ color: '#16a34a', fontSize: '1.1rem' }}>{count3}</strong> คน</span>
-                       <span style={{ color: '#94a3b8' }}>|</span>
-                       <span>ร้อยละได้ 3: <strong style={{ color: '#16a34a' }}>{percent3}%</strong></span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '1rem' }}>
-                       <span>ได้ 2: <strong style={{ color: '#2563eb', fontSize: '1.1rem' }}>{count2}</strong> คน</span>
-                       <span style={{ color: '#94a3b8' }}>|</span>
-                       <span>ร้อยละได้ 2: <strong style={{ color: '#2563eb' }}>{percent2}%</strong></span>
-                    </div>
-                 </div>
+              <td colSpan={2} className="p-3 font-extrabold bg-slate-100 text-sm">สรุปผลประเมิน</td>
+              <td colSpan={metrics[activeTab].aspects.reduce((a, b) => a + b.items.length, 0)} className="p-3">
+                <div className="flex gap-6 justify-end flex-wrap">
+                  <div className="flex gap-3 items-center">
+                    <span className="text-sm">ได้ 3: <strong className="text-green-600 text-base">{count3}</strong> คน</span>
+                    <span className="text-slate-300">|</span>
+                    <span className="text-sm">ร้อยละได้ 3: <strong className="text-green-600">{percent3}%</strong></span>
+                  </div>
+                  <div className="flex gap-3 items-center">
+                    <span className="text-sm">ได้ 2: <strong className="text-blue-600 text-base">{count2}</strong> คน</span>
+                    <span className="text-slate-300">|</span>
+                    <span className="text-sm">ร้อยละได้ 2: <strong className="text-blue-600">{percent2}%</strong></span>
+                  </div>
+                </div>
               </td>
-              <td colSpan={2} style={{ background: '#f1f5f9' }}></td>
+              <td colSpan={2} className="bg-slate-100"></td>
             </tr>
           </tfoot>
         </table>
