@@ -506,29 +506,56 @@ function Dashboard({ subject, term, onLogout, curriculum, metrics, summary }) {
       const rAspects = metrics.evaluations?.aspects || [];
       const cmAspects = metrics.competencies?.aspects || [];
       
-      cAspects.forEach((a, i) => header1.push(i === 0 ? metrics.characteristics.title : ""));
+      let charItemCount = 0;
+      cAspects.forEach(a => charItemCount += a.items.length);
+      for (let i = 0; i < charItemCount; i++) header1.push(i === 0 ? metrics.characteristics.title : "");
+      
       let evalItemCount = 0;
       rAspects.forEach(a => evalItemCount += a.items.length);
       for (let i = 0; i < evalItemCount; i++) header1.push(i === 0 ? metrics.evaluations.title : "");
-      cmAspects.forEach((a, i) => header1.push(i === 0 ? metrics.competencies.title : ""));
+      
+      let compItemCount = 0;
+      cmAspects.forEach(a => compItemCount += a.items.length);
+      for (let i = 0; i < compItemCount; i++) header1.push(i === 0 ? metrics.competencies.title : "");
+      
       wsData.push(header1);
 
       const header2 = ["", "", ""];
-      cAspects.forEach(a => header2.push(a.label));
-      rAspects.forEach(a => a.items.forEach((item, idx) => header2.push(a.id === "R" ? `${idx + 1}. ${item}` : item)));
-      cmAspects.forEach(a => header2.push(a.label));
+      cAspects.forEach((a, aIdx) => {
+         a.items.forEach((item, idx) => {
+            header2.push(`${aIdx + 1}.${idx + 1} ${item}`);
+         });
+      });
+      rAspects.forEach(a => {
+         a.items.forEach((item, idx) => {
+            header2.push(a.id === "R" ? `${idx + 1}. ${item}` : item);
+         });
+      });
+      cmAspects.forEach((a, aIdx) => {
+         a.items.forEach((item, idx) => {
+            header2.push(`${aIdx + 1}.${idx + 1} ${item}`);
+         });
+      });
       wsData.push(header2);
 
       data.forEach((student, index) => {
          const row = [index + 1, student.ID, student.Name];
-         cAspects.forEach(a => row.push(student[a.id] || ""));
+         cAspects.forEach(a => {
+            a.items.forEach((_, idx) => {
+               row.push(student[`${a.id}.${idx + 1}`] || "");
+            });
+         });
          rAspects.forEach(a => {
             a.items.forEach((_, idx) => {
                const key = a.id === "R" ? `R${idx + 1}` : `ST${idx + 1}`;
                row.push(student[key] || "");
             });
          });
-         cmAspects.forEach(a => row.push(student[a.id] || ""));
+         cmAspects.forEach(a => {
+            a.items.forEach((_, idx) => {
+               row.push(student[`${a.id}.${idx + 1}`] || "");
+            });
+         });
          wsData.push(row);
       });
 
@@ -537,9 +564,9 @@ function Dashboard({ subject, term, onLogout, curriculum, metrics, summary }) {
         { s: {r: 0, c: 0}, e: {r: 1, c: 0} },
         { s: {r: 0, c: 1}, e: {r: 1, c: 1} },
         { s: {r: 0, c: 2}, e: {r: 1, c: 2} },
-        { s: {r: 0, c: 3}, e: {r: 0, c: 3 + cAspects.length - 1} },
-        { s: {r: 0, c: 3 + cAspects.length}, e: {r: 0, c: 3 + cAspects.length + evalItemCount - 1} },
-        { s: {r: 0, c: 3 + cAspects.length + evalItemCount}, e: {r: 0, c: 3 + cAspects.length + evalItemCount + cmAspects.length - 1} }
+        { s: {r: 0, c: 3}, e: {r: 0, c: 3 + charItemCount - 1} },
+        { s: {r: 0, c: 3 + charItemCount}, e: {r: 0, c: 3 + charItemCount + evalItemCount - 1} },
+        { s: {r: 0, c: 3 + charItemCount + evalItemCount}, e: {r: 0, c: 3 + charItemCount + evalItemCount + compItemCount - 1} }
       ];
 
       const wb = XLSX.utils.book_new();
